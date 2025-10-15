@@ -2,7 +2,7 @@ name: Deploy Snowflake (staging/prod)
 
 on:
   push:
-    branches: [ main ]          # optional: auto-run on pushes to main (defaults to staging)
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       target:
@@ -16,7 +16,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    # environment cannot read from env.*, so inline the expression here
+    # environment can't read from env.*, so inline the expression here
     environment:
       name: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
 
@@ -25,11 +25,12 @@ jobs:
       TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Show selected target
-        run: |
-          echo "Deploy target: $TARGET_ENV"
+        shell: bash
+        run: echo "Deploy target: ${TARGET_ENV}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,31 +38,35 @@ jobs:
           python-version: '3.11'
 
       - name: Install deps + snowsql
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          sudo apt-get update
-          # If apt repo lacks snowsql on your runner, this will noop; we'll catch it in the apply step.
-          sudo apt-get install -y snowsql || echo "snowsql not installed from apt (will error later if required)."
+          sudo apt-get update -y
+          sudo apt-get install -y snowsql
 
       - name: Pick env file
-        id: pick
+        id: envfile
+        shell: bash
         run: |
-          if [ "$TARGET_ENV" = "prod" ]; then
+          if [ "${TARGET_ENV}" = "prod" ]; then
             echo "ENV_FILE=env/prod.yaml" >> "$GITHUB_OUTPUT"
           else
             echo "ENV_FILE=env/staging.yaml" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Show picked env file
-        run: echo "Using env file: ${{ steps.pick.outputs.ENV_FILE }}"
+        shell: bash
+        run: echo "Using env file: ${{ steps.envfile.outputs.ENV_FILE }}"
 
       - name: Render SQL for all databases
+        shell: bash
         run: |
           # expects databases.yaml at repo root and sql/*.sql.j2 templates
-          python scripts/render.py "$TARGET_ENV" "${{ steps.pick.outputs.ENV_FILE }}" databases.yaml rendered
+          python scripts/render.py "$TARGET_ENV" "${{ steps.envfile.outputs.ENV_FILE }}" databases.yaml rendered
 
       - name: Apply to Snowflake
+        shell: bash
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
