@@ -16,11 +16,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    # IMPORTANT: environment cannot read from env.*, so inline the expression here
+    # environment cannot read from env.*, so inline the expression here
     environment:
       name: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
 
-    # Keep TARGET_ENV for step-level use
+    # keep TARGET_ENV for steps
     env:
       TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
 
@@ -28,7 +28,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Show selected target
-        run: echo "Deploy target: ${TARGET_ENV}"
+        run: |
+          echo "Deploy target: $TARGET_ENV"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,26 +41,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           sudo apt-get update
-          sudo apt-get install -y snowsql
+          # If apt repo lacks snowsql on your runner, this will noop; we'll catch it in the apply step.
+          sudo apt-get install -y snowsql || echo "snowsql not installed from apt (will error later if required)."
 
       - name: Pick env file
-        id: envfile
+        id: pick
         run: |
-          if [ "${TARGET_ENV}" = "prod" ]; then
-            echo "ENV_FILE=env/prod.yaml" >> $GITHUB_OUTPUT
+          if [ "$TARGET_ENV" = "prod" ]; then
+            echo "ENV_FILE=env/prod.yaml" >> "$GITHUB_OUTPUT"
           else
-            echo "ENV_FILE=env/staging.yaml" >> $GITHUB_OUTPUT
+            echo "ENV_FILE=env/staging.yaml" >> "$GITHUB_OUTPUT"
           fi
-          echo "Using env file: ${{ steps.envfile.outputs.ENV_FILE }}"
+
+      - name: Show picked env file
+        run: echo "Using env file: ${{ steps.pick.outputs.ENV_FILE }}"
 
       - name: Render SQL for all databases
         run: |
           # expects databases.yaml at repo root and sql/*.sql.j2 templates
-          python scripts/render.py "${TARGET_ENV}" "${{ steps.envfile.outputs.ENV_FILE }}" databases.yaml rendered
+          python scripts/render.py "$TARGET_ENV" "${{ steps.pick.outputs.ENV_FILE }}" databases.yaml rendered
 
       - name: Apply to Snowflake
-        run: ./scripts/apply.sh "${TARGET_ENV}" rendered
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        run: ./scripts/apply.sh "$TARGET_ENV" rendered
