@@ -2,7 +2,7 @@ name: Deploy Snowflake (staging/prod)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main ]          # optional: auto-run on pushes to main (defaults to staging)
   workflow_dispatch:
     inputs:
       target:
@@ -15,12 +15,20 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
+    # IMPORTANT: environment cannot read from env.*, so inline the expression here
+    environment:
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
+
+    # Keep TARGET_ENV for step-level use
     env:
       TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
-    environment: ${{ env.TARGET_ENV }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Show selected target
+        run: echo "Deploy target: ${TARGET_ENV}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,7 +39,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          sudo apt-get update && sudo apt-get install -y snowsql
+          sudo apt-get update
+          sudo apt-get install -y snowsql
 
       - name: Pick env file
         id: envfile
@@ -41,9 +50,11 @@ jobs:
           else
             echo "ENV_FILE=env/staging.yaml" >> $GITHUB_OUTPUT
           fi
+          echo "Using env file: ${{ steps.envfile.outputs.ENV_FILE }}"
 
       - name: Render SQL for all databases
         run: |
+          # expects databases.yaml at repo root and sql/*.sql.j2 templates
           python scripts/render.py "${TARGET_ENV}" "${{ steps.envfile.outputs.ENV_FILE }}" databases.yaml rendered
 
       - name: Apply to Snowflake
